@@ -8,6 +8,12 @@ class Matmul:
     out: str
 
 @dataclass
+class BinaryMatmul:
+    a: str
+    b: str
+    out: str
+
+@dataclass
 class Add:
     a: str
     b: str
@@ -21,4 +27,9 @@ class ReLU:
 @dataclass
 class Const:
     value: np.ndarray
+    out: str
+
+@dataclass
+class Sign:
+    a: str
     out: str

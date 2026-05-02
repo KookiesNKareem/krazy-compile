@@ -11,6 +11,10 @@ def compile(ops, input_names, output_name):
     for op in ops:
         if isinstance(op, Matmul):
             f_str += f"\n    {op.out} = {op.a} @ {op.b}"
+        elif isinstance(op, BinaryMatmul):
+            f_str += f"\n    {op.out} = ({op.a}.astype(np.int32) @ {op.b}.astype(np.int32))"
+        elif isinstance(op, Sign):
+            f_str += f"\n    {op.out} = np.where({op.a} > 0, 1, -1).astype(np.int8)"
         elif isinstance(op, Add):
             f_str += f"\n    {op.out} = {op.a} + {op.b}"
         elif isinstance(op, ReLU):

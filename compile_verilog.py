@@ -1,4 +1,4 @@
-from ops import Add, ReLU, Matmul, Const
+from ops import *
 from dataclasses import dataclass
 import math
 import os
@@ -87,6 +87,38 @@ module matmul #(
 endmodule
 """
 
+def _binary_matmul_module() -> str:
+      return """\
+  module binary_matmul #(
+      parameter M = 1, K = 1, N = 1, WA = 2, WB = 2, WY = 16
+  ) (
+      input  signed [M*K*WA-1:0] a,
+      input  signed [K*N*WB-1:0] b,
+      output signed [M*N*WY-1:0] y
+  );
+      genvar i, j;
+      generate
+          for (i = 0; i < M; i = i + 1) begin : brow
+              for (j = 0; j < N; j = j + 1) begin : bcol
+                  reg signed [WY-1:0] acc;
+                  integer k;
+                  always @* begin
+                      acc = 0;
+                      for (k = 0; k < K; k = k + 1) begin
+                          if (a[(i*K + k) * WA + WA - 1] ==
+                              b[(k*N + j) * WB + WB - 1])
+                              acc = acc + 1;
+                          else
+                              acc = acc - 1;
+                      end
+                  end
+                  assign y[(i*N + j) * WY +: WY] = acc;
+              end
+          end
+      endgenerate
+  endmodule
+  """
+
 
 def compile_verilog(ops, input_names, output_name, input_specs):
     info: dict = {}
@@ -115,6 +147,17 @@ def compile_verilog(ops, input_names, output_name, input_specs):
             arr = np.asarray(op.value)
             info[op.out] = TensorInfo(shape=tuple(arr.shape), width=_dtype_width(arr.dtype))
             consts.append((op.out, arr))
+        elif isinstance(op, Sign):
+            a = info[op.a]
+            info[op.out] = TensorInfo(shape=a.shape, width=2)
+        elif isinstance(op, BinaryMatmul):
+            a, b = info[op.a], info[op.b]
+            assert len(a.shape) == 2 and len(b.shape) == 2, "BinaryMatmul: 2D only"
+            M, K = a.shape
+            K2, N = b.shape
+            assert K == K2, f"BinaryMatmul K mismatch {K} vs {K2}"
+            out_w = math.ceil(math.log2(K + 1)) + 1
+            info[op.out] = TensorInfo(shape=(M, N), width=out_w)
         else:
             raise TypeError(f"unknown op: {op!r}")
 
@@ -124,6 +167,8 @@ def compile_verilog(ops, input_names, output_name, input_specs):
     sv: list = []
     if any(isinstance(op, Matmul) for op in ops):
         sv.append(_matmul_module())
+    if any(isinstance(op, BinaryMatmul) for op in ops):
+        sv.append(_binary_matmul_module())
 
     ports: list = []
     for name in input_names:
@@ -152,7 +197,7 @@ def compile_verilog(ops, input_names, output_name, input_specs):
             parts.append(f"-{ti.width}'sd{-iv}" if iv < 0 else f"{ti.width}'sd{iv}")
         sv.append(f"    assign {name}__packed = {{{', '.join(parts)}}};")
 
-    add_n = relu_n = mm_n = 0
+    add_n = relu_n = mm_n = sign_n = bmm_n = 0
     for op in ops:
         if isinstance(op, Const):
             continue
@@ -188,6 +233,32 @@ def compile_verilog(ops, input_names, output_name, input_specs):
             inst = f"mm_{mm_n}"; mm_n += 1
             sv.append(
                 f"    matmul #(.M({M}), .K({K}), .N({N}), "
+                f".WA({a.width}), .WB({b.width}), .WY({o.width})) {inst} (\n"
+                f"        .a({op.a}__packed),\n"
+                f"        .b({op.b}__packed),\n"
+                f"        .y({op.out}__packed)\n"
+                f"    );"
+            )
+        elif isinstance(op, Sign):
+            a, o = info[op.a], info[op.out]
+            tag = f"sign_{sign_n}"; sign_n += 1
+            sv.append(
+                f"    generate\n"
+                f"        for (__i = 0; __i < {a.n_elements}; __i = __i + 1) begin : {tag}\n"
+                f"            assign {op.out}__packed[__i*{o.width} +: {o.width}] =\n"
+                f"                ($signed({op.a}__packed[__i*{a.width} +: {a.width}]) > 0)\n"
+                f"                ? {o.width}'sd1\n"
+                f"                : -{o.width}'sd1;\n"
+                f"        end\n"
+                f"    endgenerate"
+            )
+        elif isinstance(op, BinaryMatmul):
+            a, b, o = info[op.a], info[op.b], info[op.out]
+            M, K = a.shape
+            _, N = b.shape
+            inst = f"bmm_{bmm_n}"; bmm_n += 1
+            sv.append(
+                f"    binary_matmul #(.M({M}), .K({K}), .N({N}), "
                 f".WA({a.width}), .WB({b.width}), .WY({o.width})) {inst} (\n"
                 f"        .a({op.a}__packed),\n"
                 f"        .b({op.b}__packed),\n"

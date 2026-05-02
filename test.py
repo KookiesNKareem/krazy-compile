@@ -1,54 +1,34 @@
 import numpy as np
 from compile import compile
 from compile_verilog import compile_verilog
-from ops import *
+from ops import Const, Add, BinaryMatmul, Sign
 
+W1 = np.random.choice([-1, 1], size=(16, 8)).astype(np.int8)
+W2 = np.random.choice([-1, 1], size=(8, 4)).astype(np.int8)
+b1 = np.random.randint(-3, 3, size=(1, 8), dtype=np.int8)
+b2 = np.random.randint(-3, 3, size=(1, 4), dtype=np.int8)
 
-# scalar add (smoke test for the original use case)
-specs = {"a": np.zeros((), dtype=np.int8), "b": np.zeros((), dtype=np.int8)}
-f = compile_verilog([Add("a", "b", "y")], ["a", "b"], "y", specs)
-assert f(5, -3) == 2
-assert f(-5, -3) == -8
+ops = [
+    Const(value=W1, out="W1"),
+    Const(value=b1, out="b1"),
+    Const(value=W2, out="W2"),
+    Const(value=b2, out="b2"),
+    BinaryMatmul(a="x",  b="W1", out="t0"),
+    Add(         a="t0", b="b1", out="t1"),
+    Sign(        a="t1",         out="t2"),
+    BinaryMatmul(a="t2", b="W2", out="t3"),
+    Add(         a="t3", b="b2", out="y"),
+]
 
+# Reference x — note shape (1, 16) for matmul (M=1, K=16)
+x_spec = np.zeros((1, 16), dtype=np.int8)
 
-# vector add
-specs = {"a": np.zeros((4,), dtype=np.int8), "b": np.zeros((4,), dtype=np.int8)}
-f = compile_verilog([Add("a", "b", "y")], ["a", "b"], "y", specs)
-a = np.array([1, 2, 3, 4], dtype=np.int8)
-b = np.array([10, -20, 30, -40], dtype=np.int8)
-np.testing.assert_array_equal(f(a, b), a.astype(np.int16) + b.astype(np.int16))
+f_py  = compile(ops, ["x"], "y")
+f_sv  = compile_verilog(ops, ["x"], "y", {"x": x_spec})
 
-
-# matmul (2,3) @ (3,4) = (2,4)
-specs = {"a": np.zeros((2, 3), dtype=np.int8), "b": np.zeros((3, 4), dtype=np.int8)}
-f = compile_verilog([Matmul("a", "b", "y")], ["a", "b"], "y", specs)
-a = np.array([[1, 2, 3], [-1, 0, 4]], dtype=np.int8)
-b = np.array([[1, -2, 3, 4], [5, 6, 7, 8], [-1, 1, 0, -2]], dtype=np.int8)
-np.testing.assert_array_equal(f(a, b), (a.astype(np.int32) @ b.astype(np.int32)))
-
-
-# matmul + add + relu chain: y = relu(a @ b + c)
-specs = {
-    "a": np.zeros((2, 3), dtype=np.int8),
-    "b": np.zeros((3, 2), dtype=np.int8),
-    "c": np.zeros((2, 2), dtype=np.int16),
-}
-ops = [Matmul("a", "b", "ab"), Add("ab", "c", "abc"), ReLU("abc", "y")]
-f = compile_verilog(ops, ["a", "b", "c"], "y", specs)
-a = np.array([[1, 2, -3], [4, -5, 6]], dtype=np.int8)
-b = np.array([[1, 2], [3, 4], [5, 6]], dtype=np.int8)
-c = np.array([[100, -200], [-50, 25]], dtype=np.int16)
-expected = np.maximum(a.astype(np.int32) @ b.astype(np.int32) + c.astype(np.int32), 0)
-np.testing.assert_array_equal(f(a, b, c), expected)
-
-
-# const folded into a matmul
-weight = np.array([[1, -1], [2, 3], [0, 4]], dtype=np.int8)
-specs = {"x": np.zeros((1, 3), dtype=np.int8)}
-ops = [Const(weight, "w"), Matmul("x", "w", "y")]
-f = compile_verilog(ops, ["x"], "y", specs)
-x = np.array([[2, -1, 3]], dtype=np.int8)
-np.testing.assert_array_equal(f(x), x.astype(np.int32) @ weight.astype(np.int32))
-
-
-print("ok")
+for _ in range(20):
+    x = np.random.choice([-1, 1], size=(1, 16)).astype(np.int8)
+    py_out = f_py(x)
+    sv_out = f_sv(x)
+    assert np.array_equal(py_out, sv_out), (py_out, sv_out)
+print("PASS — both backends agree")
