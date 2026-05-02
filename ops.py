@@ -33,3 +33,19 @@ class Const:
 class Sign:
     a: str
     out: str
+
+@dataclass
+class Identity:
+    a: str
+    out: str
+
+@dataclass
+class Transpose:
+      a: str
+      out: str
+
+@dataclass
+class ReLUBackward:
+    a: str
+    dy: str
+    out: str

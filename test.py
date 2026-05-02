@@ -1,34 +1,47 @@
 import numpy as np
-from compile import compile
-from compile_verilog import compile_verilog
-from ops import Const, Add, BinaryMatmul, Sign
-
-W1 = np.random.choice([-1, 1], size=(16, 8)).astype(np.int8)
-W2 = np.random.choice([-1, 1], size=(8, 4)).astype(np.int8)
-b1 = np.random.randint(-3, 3, size=(1, 8), dtype=np.int8)
-b2 = np.random.randint(-3, 3, size=(1, 4), dtype=np.int8)
+from compile import compile, backward
+from ops import *
 
 ops = [
-    Const(value=W1, out="W1"),
-    Const(value=b1, out="b1"),
-    Const(value=W2, out="W2"),
-    Const(value=b2, out="b2"),
-    BinaryMatmul(a="x",  b="W1", out="t0"),
-    Add(         a="t0", b="b1", out="t1"),
-    Sign(        a="t1",         out="t2"),
-    BinaryMatmul(a="t2", b="W2", out="t3"),
-    Add(         a="t3", b="b2", out="y"),
+    BinaryMatmul(a="x", b="W", out="t0"),
+    Add(         a="t0", b="b", out="t1"),
+    Sign(        a="t1",        out="t2"),
+    ReLU(        a="t2",        out="y"),
 ]
+input_names = ["x", "W", "b"]
+output_name = "y"
 
-# Reference x — note shape (1, 16) for matmul (M=1, K=16)
-x_spec = np.zeros((1, 16), dtype=np.int8)
+extended_ops, ext_inputs, ext_outputs = backward(ops, input_names, output_name)
+f = compile(extended_ops, ext_inputs, ext_outputs)
 
-f_py  = compile(ops, ["x"], "y")
-f_sv  = compile_verilog(ops, ["x"], "y", {"x": x_spec})
+x   = np.random.choice([-1, 1], size=(2, 4)).astype(np.int8)
+W   = np.random.choice([-1, 1], size=(4, 3)).astype(np.int8)
+b   = np.random.randn(2, 3)
+d_y = np.random.randn(2, 3)
 
-for _ in range(20):
-    x = np.random.choice([-1, 1], size=(1, 16)).astype(np.int8)
-    py_out = f_py(x)
-    sv_out = f_sv(x)
-    assert np.array_equal(py_out, sv_out), (py_out, sv_out)
-print("PASS — both backends agree")
+y, d_x, d_W, d_b = f(x, W, b, d_y)
+
+# Reference
+def ref():
+    t0 = x.astype(np.int32) @ W.astype(np.int32)
+    t1 = t0 + b
+    t2 = np.where(t1 > 0, 1, -1).astype(np.int8)
+    y_ref = np.maximum(t2, 0)
+
+    # Backward
+    d_t2 = np.where(t2 > 0, d_y, 0)            # ReLU backward
+    d_t1 = d_t2                                  # Sign backward (STE)
+    d_t0 = d_t1                                  # Add backward
+    d_b_ref = d_t1                               # Add backward
+    d_x_ref = d_t0 @ W.astype(np.int32).T        # Matmul backward
+    d_W_ref = x.astype(np.int32).T @ d_t0        # Matmul backward
+
+    return y_ref, d_x_ref, d_W_ref, d_b_ref
+
+y_ref, d_x_ref, d_W_ref, d_b_ref = ref()
+
+assert np.allclose(y,   y_ref)
+assert np.allclose(d_x, d_x_ref)
+assert np.allclose(d_W, d_W_ref)
+assert np.allclose(d_b, d_b_ref)
+print("PASS")
