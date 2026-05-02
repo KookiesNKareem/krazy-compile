@@ -29,12 +29,12 @@ def ref():
     y_ref = np.maximum(t2, 0)
 
     # Backward
-    d_t2 = np.where(t2 > 0, d_y, 0)            # ReLU backward
-    d_t1 = d_t2                                  # Sign backward (STE)
-    d_t0 = d_t1                                  # Add backward
-    d_b_ref = d_t1                               # Add backward
-    d_x_ref = d_t0 @ W.astype(np.int32).T        # Matmul backward
-    d_W_ref = x.astype(np.int32).T @ d_t0        # Matmul backward
+    d_t2 = np.where(t2 > 0, d_y, 0)
+    d_t1 = d_t2                        
+    d_t0 = d_t1                     
+    d_b_ref = d_t1                     
+    d_x_ref = d_t0 @ W.astype(np.int32).T  
+    d_W_ref = x.astype(np.int32).T @ d_t0     
 
     return y_ref, d_x_ref, d_W_ref, d_b_ref
 
