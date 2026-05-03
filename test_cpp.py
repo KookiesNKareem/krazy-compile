@@ -1,23 +1,28 @@
 import numpy as np
 from compile_cpp import compile_cpp
-from ops import Add
+from ops import *
+
+W1 = np.random.choice([-1.0, 1.0], size=(4, 8))
+W2 = np.random.choice([-1.0, 1.0], size=(8, 3))
 
 ops = [
-    Add(a="a", b="b", out="t0"),
-    Add(a="t0", b="c", out="y"),
+    Const(value=W1, out="W1"),
+    Const(value=W2, out="W2"),
+    BinaryMatmul(a="x",  b="W1", out="t0"),
+    Sign(        a="t0",         out="t2"),
+    BinaryMatmul(a="t2", b="W2", out="y"),
 ]
-input_specs = {
-    "a": np.zeros(5),
-    "b": np.zeros(5),
-    "c": np.zeros(5),
-}
 
-f = compile_cpp(ops, ["a", "b", "c"], "y", input_specs)
+input_specs = {"x": np.zeros((1, 4))}
+f = compile_cpp(ops, ["x"], "y", input_specs)
 
-a = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-b = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
-c = np.array([100.0, 200.0, 300.0, 400.0, 500.0])
-y = f(a, b, c)
+def ref(x):
+    t0 = x @ W1
+    t2 = np.where(t0 > 0, 1.0, -1.0)
+    return t2 @ W2
 
-assert np.allclose(y, a + b + c)
+for _ in range(50):
+    x = np.random.choice([-1.0, 1.0], size=(1, 4))
+    assert np.allclose(f(x), ref(x))
+
 print("PASS")
