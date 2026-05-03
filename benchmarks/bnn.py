@@ -12,23 +12,22 @@ import time
 
 np.random.seed(0)
 
-print("Loading MNIST...")
-mnist = fetch_openml("mnist_784", version=1, as_frame=False, parser="auto")
-X = mnist.data.astype(np.float32) / 255.0
-X_88 = np.array([resize(img.reshape(28, 28), (8, 8), anti_aliasing=True).flatten() for img in X])
-y = mnist.target.astype(np.int64)
+IN_DIM = 64
+HIDDEN = 1024
+N_CLASSES = 10
+BATCH = 256
 
-X_train, X_test = X_88[:60000], X_88[60000:]
+N=100000
+X = np.random.randn(N, 64)
+# X_88 = np.array([resize(img.reshape(28, 28), (8, 8), anti_aliasing=True).flatten() for img in X])
+y = np.random.randint(0, N_CLASSES, size=N)
+
+X_train, X_test = X[:60000], X[60000:]
 y_train, y_test = y[:60000], y[60000:]
 
 X_train_bin = np.where(X_train > 0.5, 1, -1).astype(np.int8)
 X_test_bin  = np.where(X_test  > 0.5, 1, -1).astype(np.int8)
 print(f"Train: {X_train_bin.shape}, Test: {X_test_bin.shape}")
-
-IN_DIM = 64
-HIDDEN = 1024
-N_CLASSES = 10
-BATCH = 256
 
 ops = [
     Sign(a="W1_latent", out="W1"),
