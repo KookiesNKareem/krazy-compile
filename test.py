@@ -2,46 +2,47 @@ import numpy as np
 from compile import compile, backward
 from ops import *
 
+# Synthetic data: y = 3x + 2
+true_W = np.array([[3.0]])
+true_B = np.array([[2.0]])
+
+def make_batch(n=64):
+    x = np.random.randn(n, 1)
+    y = x @ true_W + true_B
+    return x, y
+
 ops = [
-    BinaryMatmul(a="x", b="W", out="t0"),
-    Add(         a="t0", b="b", out="t1"),
-    Sign(        a="t1",        out="t2"),
-    ReLU(        a="t2",        out="y"),
+    Matmul(   a="x",  b="W", out="t0"),
+    Broadcast(a="B",  a_shape=(1, 1), out_shape=(64, 1), out="B_bcast"),
+    Add(      a="t0", b="B_bcast", out="pred"),
+    MSELoss(  pred="pred", target="y_target", out="loss"),
 ]
-input_names = ["x", "W", "b"]
-output_name = "y"
+input_names = ["x", "W", "B", "y_target"]
 
-extended_ops, ext_inputs, ext_outputs = backward(ops, input_names, output_name)
-f = compile(extended_ops, ext_inputs, ext_outputs)
+extended_ops, ext_inputs, ext_outputs = backward(
+    ops, input_names, output_name="loss", params=["W", "B"]
+)
+train_step = compile(extended_ops, ext_inputs, ext_outputs)
 
-x   = np.random.choice([-1, 1], size=(2, 4)).astype(np.int8)
-W   = np.random.choice([-1, 1], size=(4, 3)).astype(np.int8)
-b   = np.random.randn(2, 3)
-d_y = np.random.randn(2, 3)
+W = np.random.randn(1, 1) * 0.1
+B = np.random.randn(1, 1) * 0.1
+lr = 0.5
 
-y, d_x, d_W, d_b = f(x, W, b, d_y)
+for step in range(200):
+    x, y = make_batch(64)
+    d_loss = np.array(1.0)
+    loss, d_W, d_B = train_step(x, W, B, y, d_loss)
 
-# Reference
-def ref():
-    t0 = x.astype(np.int32) @ W.astype(np.int32)
-    t1 = t0 + b
-    t2 = np.where(t1 > 0, 1, -1).astype(np.int8)
-    y_ref = np.maximum(t2, 0)
+    W = W - lr * d_W
+    B = B - lr * d_B
 
-    # Backward
-    d_t2 = np.where(t2 > 0, d_y, 0)
-    d_t1 = d_t2                        
-    d_t0 = d_t1                     
-    d_b_ref = d_t1                     
-    d_x_ref = d_t0 @ W.astype(np.int32).T  
-    d_W_ref = x.astype(np.int32).T @ d_t0     
+    # if loss <= 0.01:
+    #     break
+    if step % 20 == 0:
+        print(f"step {step:4d}  loss={loss:.5f}  W={W.flatten()}  B={B.flatten()}")
 
-    return y_ref, d_x_ref, d_W_ref, d_b_ref
-
-y_ref, d_x_ref, d_W_ref, d_b_ref = ref()
-
-assert np.allclose(y,   y_ref)
-assert np.allclose(d_x, d_x_ref)
-assert np.allclose(d_W, d_W_ref)
-assert np.allclose(d_b, d_b_ref)
+print(f"\nLearned W={W.flatten()} (true=3.0)")
+print(f"Learned B={B.flatten()} (true=2.0)")
+assert abs(W.item() - 3.0) < 0.05
+assert abs(B.item() - 2.0) < 0.05
 print("PASS")

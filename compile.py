@@ -1,6 +1,15 @@
 from ops import *
 import numpy as np
 
+def _reduce_to_shape(a, target_shape):
+    a = np.asarray(a)
+    while a.ndim > len(target_shape):
+        a = a.sum(axis=0)
+    for i in range(a.ndim):
+        if target_shape[i] == 1 and a.shape[i] != 1:
+            a = a.sum(axis=i, keepdims=True)
+    return a
+
 def compile(ops, input_names, output_name):
     single_output = 1 if isinstance(output_name, str) else 0
     if single_output:
@@ -10,7 +19,7 @@ def compile(ops, input_names, output_name):
     f_str += ",".join(input_names)
     f_str += "):"
 
-    ns = {"np": np}
+    ns = {"np": np, "_reduce_to_shape": _reduce_to_shape}
     consts = 0
     for op in ops:
         if isinstance(op, Matmul):
@@ -33,6 +42,16 @@ def compile(ops, input_names, output_name):
             f_str += f"\n\t{op.out} = {op.a}.T"
         elif isinstance(op, ReLUBackward):
             f_str += f"\n\t{op.out} = np.where({op.a} > 0, {op.dy}, 0)"
+        elif isinstance(op, MSELoss):
+            f_str += f"\n\t{op.out} = np.mean(({op.pred} - {op.target}) ** 2)"
+        elif isinstance(op, MSELossBackward):
+            f_str += f"\n\t{op.out} = ({op.dy} * 2.0 / {op.pred}.size) * ({op.pred} - {op.target})"
+        elif isinstance(op, Broadcast):
+            f_str += f"\n\t{op.out} = np.broadcast_to({op.a}, {op.out_shape}).copy()"
+        elif isinstance(op, ReduceSumToShape):
+            f_str += f"\n\t{op.out} = _reduce_to_shape({op.a}, {op.target_shape})"
+
+
 
     if single_output:
         f_str += f"\n\treturn {output_name}"
@@ -43,7 +62,7 @@ def compile(ops, input_names, output_name):
     return ns["f"]
 
 
-def backward(ops, input_names, output_name) -> tuple[list, list, list]:
+def backward(ops, input_names, output_name, params=None):
     gradients = dict()
     gradients[output_name] = f"d_{output_name}"
 
@@ -91,10 +110,19 @@ def backward(ops, input_names, output_name) -> tuple[list, list, list]:
         elif isinstance(op, ReLU):
             backward_ops.append(ReLUBackward(a=op.a, dy=g_out, out=f"d_{op.a}"))
             gradients[op.a] = f"d_{op.a}"
+        elif isinstance(op, MSELoss):
+            backward_ops.append(MSELossBackward(pred=op.pred, target=op.target, dy=g_out, out=f"d_{op.pred}"))
+            gradients[op.pred] = f"d_{op.pred}"
+        elif isinstance(op, Broadcast):
+            backward_ops.append(
+                ReduceSumToShape(a=g_out, target_shape=op.a_shape, out=f"d_{op.a}")
+            )
+            gradients[op.a] = f"d_{op.a}"
         else:
             raise NotImplementedError(f"backward not implemented for {type(op).__name__}")
 
+    diff_set = params if params is not None else input_names
     extended_ops = ops + backward_ops
     extended_input_names = input_names + [f"d_{output_name}"]
-    extended_output_names = [output_name] + [f"d_{name}" for name in input_names]
+    extended_output_names = [output_name] + [f"d_{n}" for n in diff_set]
     return extended_ops, extended_input_names, extended_output_names

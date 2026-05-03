@@ -49,3 +49,30 @@ class ReLUBackward:
     a: str
     dy: str
     out: str
+
+@dataclass
+class MSELoss:
+    pred: str
+    target: str
+    out: str
+
+@dataclass
+class MSELossBackward:
+    pred: str
+    target: str
+    dy: str
+    out: str
+
+
+@dataclass
+class Broadcast:
+    a: str
+    a_shape: tuple
+    out_shape: tuple
+    out: str
+
+@dataclass
+class ReduceSumToShape:
+    a: str
+    target_shape: tuple
+    out: str
